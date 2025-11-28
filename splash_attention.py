@@ -9,7 +9,7 @@ import math
 import sparse_attention
 
 
-@helion.kernel(autotune_effort="none")
+@helion.kernel(autotune_effort="none", ignore_warnings=[helion.exc.TensorOperationInWrapper])
 def _sparse_attn_fwd(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, causal: hl.constexpr = False, sample: hl.constexpr = False, return_map: hl.constexpr = False):
 
     B, nh, T, hs = q.shape
@@ -35,7 +35,6 @@ def _sparse_attn_fwd(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, causal: 
     p_mask_avg = torch.zeros((B * nh, ), device=q.device, dtype=torch.float32)
 
     for tile_b in hl.tile(B * nh):
-        #p_mask = p_mask_avg[tile_b]
         for tile_q in hl.tile(T):
             _max_logits = max_logits[tile_b, tile_q]
             _lse = lse[tile_b, tile_q]
@@ -50,7 +49,7 @@ def _sparse_attn_fwd(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, causal: 
                     logits = torch.where(causal_mask, logits, float('-inf'))
                 else:
                     count[tile_b] += tile_k.count * tile_q.count
-                #p_mask = p_mask + logits.sigmoid().sum(dim=-1).sum(dim=-1)
+                p_mask_avg[tile_b] += logits.sigmoid().sum(dim=-1).sum(dim=-1)
 
                 new_max_logits = torch.maximum(_max_logits, logits.amax(dim=-1))
                 ratio = torch.exp(_max_logits - new_max_logits)
@@ -75,8 +74,7 @@ def _sparse_attn_fwd(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, causal: 
                 _lse = new_lse
             lse[tile_b, tile_q] = _lse
             max_logits[tile_b, tile_q] = _max_logits
-        #p_mask_avg[tile_b] = p_mask
-    #p_mask_avg = p_mask_avg / count
+    p_mask_avg.div_(count)
     return out.view(B, nh, T, hs), p_mask_avg.view(B, nh), adj, max_logits, lse
 
 
@@ -186,15 +184,14 @@ sparse_attention_ = SparseAttention.apply
 
 if __name__ == '__main__':
 
-    q = torch.randn(1, 2, 10, 10, device='cuda', dtype=torch.float32)
-    q.requires_grad = True
-    q2 = q.detach().clone()
-    q2.requires_grad = True
-    
-    h, p_mask, adj = sparse_attention_(q, q, q, True, False, False)
-    gold, gold_p_mask, gold_adj = sparse_attention._sparse_attention_torch(q2, q2, q2, True, False, False)
-    print('causal: ', torch.allclose(h, gold, atol=1e-2, rtol=1e-2), (gold - h).abs().max(), p_mask, gold_p_mask)
-    h, p_mask, adj = sparse_attention_(q, q, q, False, False, False)
-    gold, gold_p_mask, gold_adj = sparse_attention._sparse_attention_torch(q2, q2, q2, False, False, False)
+    q, k, v = torch.randn(3, 1, 2, 10, 10, device='cuda', dtype=torch.float32).unbind(0)
 
-    print('noncausal: ', torch.allclose(h, gold, atol=1e-2, rtol=1e-2), (gold - h).abs().max(), p_mask, gold_p_mask)
+    # causal attention test
+    out, p_mask, adj = sparse_attention_(q, k, v, True, False, False)
+    gold_out, gold_p_mask, gold_adj = sparse_attention._sparse_attention_torch(q, k, v, True, False, False)
+    print('causal: ', torch.allclose(out, gold_out, atol=1e-2, rtol=1e-2), (gold_out - out).abs().max())
+
+    # noncausal attention test
+    h, p_mask, adj = sparse_attention_(q, q, q, False, False, False)
+    gold, gold_p_mask, gold_adj = sparse_attention._sparse_attention_torch(q, k, v, False, False, False)
+    print('noncausal: ', torch.allclose(out, gold_out, atol=1e-2, rtol=1e-2), (gold_out - out).abs().max())

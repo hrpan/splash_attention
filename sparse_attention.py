@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+
 class SparseSelfAttention(nn.Module):
     def __init__(self,
                  embed_dim,
@@ -21,8 +22,9 @@ class SparseSelfAttention(nn.Module):
         # regularization
         self.attn_dropout = nn.Dropout(dropout)
         self.resid_dropout = nn.Dropout(dropout)
+        self.dropout_rate = dropout
 
-    def forward(self, x, is_causal=False, sample=True):
+    def forward(self, x, is_causal=False, sample=True, return_att=False):
         B, T, C = (
             x.size()
         )  # batch size, sequence length, embedding dimensionality (n_embd)
@@ -41,45 +43,52 @@ class SparseSelfAttention(nn.Module):
         k = k.transpose(1, 2)  # (B, nh, T, hs)
         v = v.transpose(1, 2)  # (B, nh, T, hs)
 
-        # manual implementation of attention
-        att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
-
-        # causal mask
-        if is_causal:
-            mask = torch.tril(torch.ones(T, T, device=x.device)).view(1, 1, T, T)
-            att = att.masked_fill(mask == 0, float("-inf"))
-
-        if sample:
-            edge_samples = self.gumbel_sample(att)
-        else:
-            edge_samples = (att > 0).float()
-        sm_att = F.softmax(att, dim=-1)
-        masked_att_weights = sm_att * edge_samples
-
-        masked_att_weights = self.attn_dropout(masked_att_weights)
-        y = masked_att_weights @ v  # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
-
-        y = (
-            y.transpose(1, 2).contiguous().view(B, T, C)
-        )  # re-assemble all head outputs side by side
+        y, l1, att = _sparse_attention_torch(q, k, v, is_causal, sample, return_att)
 
         # output projection
         y = self.resid_dropout(self.c_proj(y))
         # returns the attention pattern for regulaisation
         return y, att
 
-    def gumbel_sample(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Gumbel-softmax sampling. Takes logits and returns samples in [0, 1].
-        """
-        logistics = torch.logit(torch.rand_like(x))
-        samples = (logistics + x) > 0
-        return (
-            samples.float()
-            + torch.sigmoid(x + logistics)
-            - torch.sigmoid(x + logistics).detach()
-        )
-        
+
+def _sparse_attention_torch(q, k, v, causal, sample, return_att):
+    # manual implementation of attention
+    att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
+
+    # causal mask
+    if causal:
+        T = q.size(-2)
+        mask = torch.tril(torch.ones(T, T, device=q.device)).view(1, 1, T, T)
+        att = att.masked_fill(mask == 0, float("-inf"))
+        count = mask.sum()[None, None]
+    else:
+        count = q.size(-2) ** 2
+
+    if sample:
+        edge_samples = gumbel_sample(att)
+    else:
+        edge_samples = (att > 0).float()
+    sm_att = F.softmax(att, dim=-1)
+    masked_att_weights = sm_att * edge_samples
+
+    # masked_att_weights = self.attn_dropout(masked_att_weights)
+    y = masked_att_weights @ v  # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
+
+    return y, att.sigmoid().sum(dim=[-1, -2]) / count, att
+
+
+def gumbel_sample(self, x: torch.Tensor) -> torch.Tensor:
+    """
+    Gumbel-softmax sampling. Takes logits and returns samples in [0, 1].
+    """
+    logistics = torch.logit(torch.rand_like(x))
+    samples = (logistics + x) > 0
+    return (
+        samples.float()
+        + torch.sigmoid(x + logistics)
+        - torch.sigmoid(x + logistics).detach()
+    )
+
 
 if __name__ == "__main__":
     # super simple shape test

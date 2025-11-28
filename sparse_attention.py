@@ -77,7 +77,7 @@ def _sparse_attention_torch(q, k, v, causal, sample, return_att):
     return y, att.sigmoid().sum(dim=[-1, -2]) / count, att
 
 
-def gumbel_sample(self, x: torch.Tensor) -> torch.Tensor:
+def gumbel_sample(x: torch.Tensor) -> torch.Tensor:
     """
     Gumbel-softmax sampling. Takes logits and returns samples in [0, 1].
     """

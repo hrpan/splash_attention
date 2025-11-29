@@ -64,10 +64,8 @@ def _sparse_attention_torch(q, k, v, causal, sample, return_att):
     else:
         count = q.size(-2) ** 2
 
-    if sample:
-        edge_samples = gumbel_sample(att)
-    else:
-        edge_samples = (att > 0).float()
+    edge_samples = gumbel_sample(att, sample=sample)
+
     sm_att = F.softmax(att, dim=-1)
     masked_att_weights = sm_att * edge_samples
 
@@ -77,11 +75,14 @@ def _sparse_attention_torch(q, k, v, causal, sample, return_att):
     return y, att.sigmoid().sum(dim=[-1, -2]) / count, att
 
 
-def gumbel_sample(x: torch.Tensor) -> torch.Tensor:
+def gumbel_sample(x: torch.Tensor, sample: bool = False) -> torch.Tensor:
     """
     Gumbel-softmax sampling. Takes logits and returns samples in [0, 1].
     """
-    logistics = torch.logit(torch.rand_like(x))
+    if sample:
+        logistics = torch.logit(torch.rand_like(x))
+    else:
+        logistics = 0
     samples = (logistics + x) > 0
     return (
         samples.float()

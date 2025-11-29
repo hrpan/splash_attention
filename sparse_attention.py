@@ -85,7 +85,7 @@ def gumbel_sample(x: torch.Tensor, sample: bool = False) -> torch.Tensor:
         logistics = 0
     samples = (logistics + x) > 0
     return (
-        samples.float()
+        samples.to(x.dtype)
         + torch.sigmoid(x + logistics)
         - torch.sigmoid(x + logistics).detach()
     )

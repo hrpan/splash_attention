@@ -93,9 +93,9 @@ def _sparse_attn_fwd(
 
                 if return_map:
                     if causal:
-                        adj[tile_b, tile_q, tile_k] = (sparse_mask & causal_mask).float()
+                        adj[tile_b, tile_q, tile_k] = sparse_mask & causal_mask
                     else:
-                        adj[tile_b, tile_q, tile_k] = sparse_mask.float()
+                        adj[tile_b, tile_q, tile_k] = sparse_mask
                 weights = torch.where(sparse_mask, exp_weights, 0)
                 curr_out = torch.matmul(weights, v[tile_b, tile_q, :])
                 out_old = _lse[:, :, None] * out[tile_b, tile_q, :] * ratio[:, :, None]
@@ -257,15 +257,17 @@ if __name__ == '__main__':
 
     # causal attention test
     with torch.no_grad():
-        out, p_mask, adj = splash_attention(q, k, v, True, False, False)
-        gold_out, gold_p_mask, gold_adj = sparse_attention._sparse_attention_torch(q, k, v, True, False, False)
+        out, p_mask, adj = splash_attention(q, k, v, True, False, True)
+        gold_out, gold_p_mask, gold_adj = sparse_attention._sparse_attention_torch(q, k, v, True, False, True)
     print('### causal forward test: ')
     out_diff = (out - gold_out).abs().max().item()
     assert torch.allclose(out, gold_out, atol=eps, rtol=eps), f'out failed abs max: {out_diff:.4f}'
     print('out passed with abs diff:', out_diff)
     mask_diff = (p_mask - gold_p_mask).abs().max().item()
     assert torch.allclose(p_mask, gold_p_mask, atol=eps, rtol=eps), f'mask failed abs max: {mask_diff:.4f}'
-    print('mask passed with abs diff:', mask_diff)
+    print('expected mask passed with abs diff:', mask_diff)
+    assert torch.equal(adj, gold_adj)
+    print('mask passed')
 
     # noncausal attention test
     with torch.no_grad():

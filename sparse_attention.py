@@ -72,7 +72,9 @@ def _sparse_attention_torch(q, k, v, causal, sample, return_att):
     # masked_att_weights = self.attn_dropout(masked_att_weights)
     y = masked_att_weights @ v  # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
 
-    return y, att.sigmoid().sum(dim=[-1, -2]) / count, att
+    adj = edge_samples == 1.
+
+    return y, att.sigmoid().sum(dim=[-1, -2]) / count, adj
 
 
 def gumbel_sample(x: torch.Tensor, sample: bool = False) -> torch.Tensor:

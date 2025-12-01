@@ -28,7 +28,7 @@ import sparse_attention
         range_unroll_factors=[0, 0, 0],
         range_warp_specializes=[]
     ),
-    static_shapes=True,
+    static_shapes=False,
     ignore_warnings=[helion.exc.TensorOperationInWrapper]
 )
 def _sparse_attn_fwd(
@@ -127,7 +127,7 @@ def _sparse_attn_fwd(
         range_num_stages=[],
         range_unroll_factors=[0, 4, 1],
         range_warp_specializes=[]),
-    static_shapes=True,
+    static_shapes=False,
     ignore_warnings=[helion.exc.TensorOperationInWrapper]
 )
 def _sparse_attn_bwd(
@@ -225,10 +225,8 @@ class SplashAttention(torch.autograd.Function):
         out, p_mask, adj, max_logits, lse = _sparse_attn_fwd(q, k, v, causal, sample, return_map)
 
         ctx.save_for_backward(q, k, v, out, p_mask, max_logits, lse)
-                #if sample:
-        #    ctx.mark_non_differentiable(adj)
-        #else:
-        #    ctx.mark_non_differentiable(out, adj)
+
+        ctx.mark_non_differentiable(adj)
 
         return out, p_mask, adj
 

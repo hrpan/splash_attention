@@ -277,8 +277,8 @@ if __name__ == '__main__':
 
     # noncausal attention test
     with torch.no_grad():
-        out, p_mask, adj = splash_attention(q, k, v, False, False, False)
-        gold_out, gold_p_mask, gold_adj = sparse_attention._sparse_attention_torch(q, k, v, False, False, False)
+        out, p_mask, adj = splash_attention(q, k, v, False, False, True)
+        gold_out, gold_p_mask, gold_adj = sparse_attention._sparse_attention_torch(q, k, v, False, False, True)
     print('### noncausal forward test: ')
     out_diff = (out - gold_out).abs().max().item()
     assert torch.allclose(out, gold_out, atol=eps, rtol=eps), f'out failed abs max: {out_diff:.4f}'
@@ -288,6 +288,12 @@ if __name__ == '__main__':
     print('expected mask passed with abs diff:', mask_diff)
     mask_same_count = (adj == gold_adj).sum()
     print(f'mask pass rate: {100 * mask_same_count/mask_size:.4f}%')
+
+    # noncausal attention sample test
+    # no gold comparison because rng
+    with torch.no_grad():
+        out, p_mask, adj = splash_attention(q, k, v, False, True, True)
+    print('### causal sample forward passed')
 
     # backward tests
     q.requires_grad = True

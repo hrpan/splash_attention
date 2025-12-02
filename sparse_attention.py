@@ -72,7 +72,7 @@ def _sparse_attention_torch(q, k, v, causal, sample, return_att):
     # masked_att_weights = self.attn_dropout(masked_att_weights)
     y = masked_att_weights @ v  # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
 
-    adj = edge_samples == 1.
+    adj = att > 0
 
     return y, att.sigmoid().sum(dim=[-1, -2]) / count, adj
 

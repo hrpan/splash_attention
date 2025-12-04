@@ -6,6 +6,8 @@ import helion.language as hl
 
 import math
 
+import random
+
 import sparse_attention
 
 
@@ -18,6 +20,7 @@ def _sparse_attn_fwd(
     q: torch.Tensor,
     k: torch.Tensor,
     v: torch.Tensor,
+    seed: int,
     causal: hl.constexpr = False,
     sample: hl.constexpr = False,
     return_map: hl.constexpr = False
@@ -69,7 +72,7 @@ def _sparse_attn_fwd(
                 new_lse = _lse * ratio + curr_lse
 
                 if sample:
-                    rand = torch.logit(torch.rand_like(logits))
+                    rand = torch.logit(hl.rand(logits.shape, seed=seed, device=q.device))
                     sparse_mask = logits + rand > 0
                 else:
                     sparse_mask = logits > 0
@@ -147,7 +150,7 @@ def _sparse_attn_bwd(
                     logits = torch.where(causal_mask, logits, float('-inf'))
 
                 if sample:
-                    rand = torch.logit(torch.rand_like(logits))
+                    rand = torch.logit(hl.rand(logits.shape, seed=seed, device=q.device))
                     sparse_mask = logits + rand > 0
                     gate = (logits + rand).sigmoid()
                     gate_prob = logits.sigmoid()
@@ -186,11 +189,13 @@ class SplashAttention(torch.autograd.Function):
     def forward(ctx, q, k, v, causal: bool = False, sample: bool = False, return_map: bool = False):
 
         assert q.shape == k.shape and k.shape == v.shape
+
+        seed = random.randint(0, 2 ** 31)
+        ctx.seed = seed
         ctx.causal = causal
         ctx.sample = sample
-        ctx.cuda_rng = torch.cuda.get_rng_state(device=q.device)
 
-        out, p_mask, adj, max_logits, lse = _sparse_attn_fwd(q, k, v, causal, sample, return_map)
+        out, p_mask, adj, max_logits, lse = _sparse_attn_fwd(q, k, v, seed, causal, sample, return_map)
 
         ctx.save_for_backward(q, k, v, out, p_mask, max_logits, lse)
 
@@ -203,13 +208,11 @@ class SplashAttention(torch.autograd.Function):
     def backward(ctx, grad_out, grad_p_mask, dummy):
 
         q, k, v, out, p_mask, max_logits, lse = ctx.saved_tensors
+        seed = ctx.seed
         causal = ctx.causal
         sample = ctx.sample
 
-        grad_q = grad_k = grad_v = None
-        with torch.random.fork_rng(devices=[q.device]):
-            torch.cuda.set_rng_state(ctx.cuda_rng, q.device)
-            grad_q, grad_k, grad_v = _sparse_attn_bwd(grad_out, grad_p_mask, q, k, v, out, max_logits, lse, causal, sample)
+        grad_q, grad_k, grad_v = _sparse_attn_bwd(grad_out, grad_p_mask, q, k, v, out, max_logits, lse, seed, causal, sample)
 
         return grad_q, grad_k, grad_v, None, None, None
 
@@ -220,14 +223,14 @@ if __name__ == '__main__':
 
     eps = 1e-2  # from helion puzzle
 
-    q, k, v = torch.randn(3, 1, 2, 10, 10, device='cuda', dtype=torch.float32).unbind(0)
-    mask_size = q.size(-1) * q.size(-2) * q.size(-3)
+    q, k, v = torch.randn(3, 1, 2, 10, 16, device='cuda', dtype=torch.float64).unbind(0)
+    mask_size = q.size(-3) * q.size(-2) * q.size(-2)
 
     # causal attention test
     with torch.no_grad():
         out, p_mask, adj = splash_attention(q, k, v, True, False, True)
         gold_out, gold_p_mask, gold_adj = sparse_attention._sparse_attention_torch(q, k, v, True, False, True)
-    print('### causal forward test: ')
+    print('### causal=True sample=False forward test: ')
     out_diff = (out - gold_out).abs().max().item()
     assert torch.allclose(out, gold_out, atol=eps, rtol=eps), f'out failed abs max: {out_diff:.4f}'
     print('out passed with abs diff:', out_diff)
@@ -264,6 +267,7 @@ if __name__ == '__main__':
     print('### causal sample forward passed')
 
     # backward tests
+    q, k, v = torch.randn(3, 1, 2, 10, 16, device='cuda', dtype=torch.float32).unbind(0)
     q.requires_grad = True
     k.requires_grad = True
     v.requires_grad = True

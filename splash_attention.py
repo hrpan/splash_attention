@@ -10,24 +10,7 @@ import sparse_attention
 
 
 @helion.kernel(
-    config=helion.Config(
-        block_sizes=[2, 16, 16],
-        indexing=[
-            'pointer', 'pointer', 'pointer',
-            'pointer', 'pointer', 'pointer',
-            'pointer', 'pointer', 'pointer',
-            'pointer', 'pointer', 'pointer', 'pointer'
-        ],
-        load_eviction_policies=['', '', '', '', '', '', '', ''],
-        num_stages=1,
-        num_warps=4,
-        pid_type='flat',
-        range_flattens=[None, None, None],
-        range_multi_buffers=[None, None, None],
-        range_num_stages=[],
-        range_unroll_factors=[0, 0, 0],
-        range_warp_specializes=[]
-    ),
+    autotune_effort="none",
     static_shapes=False,
     ignore_warnings=[helion.exc.TensorOperationInWrapper]
 )
@@ -110,23 +93,7 @@ def _sparse_attn_fwd(
 
 
 @helion.kernel(
-    config=helion.Config(
-        block_sizes=[2, 16, 16],
-        indexing=[
-            'block_ptr', 'pointer', 'block_ptr', 'block_ptr',
-            'pointer', 'block_ptr', 'block_ptr', 'pointer',
-            'pointer', 'block_ptr', 'pointer', 'block_ptr',
-            'block_ptr', 'pointer', 'block_ptr', 'pointer'
-        ],
-        load_eviction_policies=['last', '', 'last', '', 'first', 'first', '', 'last', '', 'last', '', 'first', 'last'],
-        num_stages=2,
-        num_warps=8,
-        pid_type='flat',
-        range_flattens=[None, None, True],
-        range_multi_buffers=[None, False, None],
-        range_num_stages=[],
-        range_unroll_factors=[0, 4, 1],
-        range_warp_specializes=[]),
+    autotune_effort="none",
     static_shapes=False,
     ignore_warnings=[helion.exc.TensorOperationInWrapper]
 )
@@ -139,6 +106,7 @@ def _sparse_attn_bwd(
     out: torch.Tensor,
     max_logits: torch.Tensor,
     lse: torch.Tensor,
+    seed: int,
     causal: hl.constexpr = False,
     sample: hl.constexpr = False,
 ):

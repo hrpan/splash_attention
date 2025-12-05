@@ -58,7 +58,7 @@ def _sparse_attention_torch(q, k, v, causal, sample, return_att):
     # causal mask
     if causal:
         T = q.size(-2)
-        mask = torch.tril(torch.ones(T, T, device=q.device)).view(1, 1, T, T)
+        mask = torch.tril(torch.ones(T, T, device=q.device, dtype=q.dtype)).view(1, 1, T, T)
         att = att.masked_fill(mask == 0, float("-inf"))
         count = mask.sum()[None, None]
     else:

@@ -129,9 +129,9 @@ def _sparse_attn_bwd(
     grad_mask = grad_mask.view(-1)
 
     scale = 1 / math.sqrt(q.size(-1))
-    grad_q = torch.zeros_like(q)
-    grad_k = torch.zeros_like(k)
-    grad_v = torch.zeros_like(v)
+    grad_q = torch.zeros_like(q, dtype=torch.float32)
+    grad_k = torch.zeros_like(k, dtype=torch.float32)
+    grad_v = torch.zeros_like(v, dtype=torch.float32)
 
     if causal:
         count = float(T * (T + 1) // 2)
@@ -142,10 +142,10 @@ def _sparse_attn_bwd(
         for tile_q in hl.tile(T):
             _max_logits = max_logits[tile_b, tile_q]
             _lse = lse[tile_b, tile_q]
-            qs = q[tile_b, tile_q, :]
+            qs = q[tile_b, tile_q, :].float()
 
             for tile_k in hl.tile(T):
-                ks = k[tile_b, tile_k, :]
+                ks = k[tile_b, tile_k, :].float()
                 logits = (qs @ ks.transpose(-1, -2) * scale)
 
                 if causal:
@@ -168,23 +168,32 @@ def _sparse_attn_bwd(
                 grad_v[tile_b, tile_k, :] = torch.baddbmm(
                     grad_v[tile_b, tile_k, :],
                     final_weights.transpose(-1, -2),
-                    grad_out[tile_b, tile_k, :]
+                    grad_out[tile_b, tile_k, :].float(),
                 )
 
-                gvt = torch.matmul(grad_out[tile_b, tile_q, :], v[tile_b, tile_k, :].transpose(-1, -2))
-                go = (grad_out[tile_b, tile_q, :] * out[tile_b, tile_q, :]).sum(dim=-1)[:, :, None]
+                gvt = torch.matmul(
+                    grad_out[tile_b, tile_q, :].float(),
+                    v[tile_b, tile_k, :].transpose(-1, -2).float()
+                )
+                go = (
+                    grad_out[tile_b, tile_q, :].float() * out[tile_b, tile_q, :].float()
+                ).sum(dim=-1)[:, :, None]
 
                 grad_score = attn_weights * (((gate * (1 - gate)) + sparse_mask.to(q.dtype)) * gvt - go) * scale
 
                 # sparsity bwd
-                grad_sigmoid = grad_mask[tile_b, None, None] * gate_prob * (1 - gate_prob) * scale / count
+                grad_sigmoid = grad_mask[tile_b, None, None].float() * gate_prob * (1 - gate_prob) * scale / count
 
                 grad_both = grad_score + grad_sigmoid
 
                 grad_q[tile_b, tile_q, :] = torch.baddbmm(grad_q[tile_b, tile_q, :], grad_both, ks)
                 grad_k[tile_b, tile_k, :] = torch.baddbmm(grad_k[tile_b, tile_k, :], grad_both.transpose(-1, -2), qs)
 
-    return grad_q.view(B, nh, T, hs), grad_k.view(B, nh, T, hs), grad_v.view(B, nh, T, hs)
+    return (
+        grad_q.view(B, nh, T, hs).to(dtype=q.dtype),
+        grad_k.view(B, nh, T, hs).to(dtype=q.dtype),
+        grad_v.view(B, nh, T, hs).to(dtype=q.dtype)
+    )
 
 
 class SplashAttention(torch.autograd.Function):
@@ -192,6 +201,10 @@ class SplashAttention(torch.autograd.Function):
     def forward(ctx, q, k, v, causal: bool = False, sample: bool = False, return_map: bool = False):
 
         assert q.shape == k.shape and k.shape == v.shape
+
+        q = q.contiguous()
+        k = k.contiguous()
+        v = v.contiguous()
 
         seed = random.randint(0, 2 ** 31)
         ctx.seed = seed
@@ -215,7 +228,12 @@ class SplashAttention(torch.autograd.Function):
         causal = ctx.causal
         sample = ctx.sample
 
-        grad_q, grad_k, grad_v = _sparse_attn_bwd(grad_out, grad_p_mask, q, k, v, out, max_logits, lse, seed, causal, sample)
+        grad_q, grad_k, grad_v = _sparse_attn_bwd(
+            grad_out.contiguous(),
+            grad_p_mask.contiguous(),
+            q, k, v, out, max_logits, lse,
+            seed, causal, sample
+        )
 
         return grad_q, grad_k, grad_v, None, None, None
 

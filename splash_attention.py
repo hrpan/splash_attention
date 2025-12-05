@@ -33,15 +33,15 @@ def _sparse_attn_fwd(
     v = v.view(-1, T, hs)
 
     scale = 1 / math.sqrt(q.size(-1))
-    out = torch.empty((B * nh, T, hs), device=q.device, dtype=q.dtype)
+    out = torch.zeros((B * nh, T, hs), device=q.device, dtype=torch.float32)
 
     if return_map:
         adj = torch.zeros((B * nh, T, T), device=q.device, dtype=torch.bool)
     else:
         adj = None
 
-    max_logits = torch.full((B * nh, T), float('-inf'), device=q.device, dtype=q.dtype)
-    lse = torch.full((B * nh, T), 0, device=q.device, dtype=q.dtype)
+    max_logits = torch.full((B * nh, T), float('-inf'), device=q.device, dtype=torch.float32)
+    se = torch.full((B * nh, T), 0, device=q.device, dtype=torch.float32)
 
     # count number of non-masked elements for averaging sparsity (trivial for now, but can be useful for future)
     if causal:
@@ -49,15 +49,15 @@ def _sparse_attn_fwd(
     else:
         count = float(T * T)
 
-    p_mask_avg = torch.zeros((B * nh, ), device=q.device, dtype=q.dtype)
+    p_mask_avg = torch.zeros((B * nh, ), device=q.device, dtype=torch.float32)
 
     for tile_b in hl.tile(B * nh):
         for tile_q in hl.tile(T):
             _max_logits = max_logits[tile_b, tile_q]
-            _lse = lse[tile_b, tile_q]
-            qs = q[tile_b, tile_q, :]
+            _se = se[tile_b, tile_q]
+            qs = q[tile_b, tile_q, :].float()
             for tile_k in hl.tile(T):
-                ks = k[tile_b, tile_k, :]
+                ks = k[tile_b, tile_k, :].float()
                 logits = (qs @ ks.transpose(-1, -2) * scale)
 
                 if causal:
@@ -66,10 +66,9 @@ def _sparse_attn_fwd(
                 p_mask_avg[tile_b] += logits.sigmoid().sum(dim=-1).sum(dim=-1)
 
                 new_max_logits = torch.maximum(_max_logits, logits.amax(dim=-1))
-                ratio = torch.exp(_max_logits - new_max_logits)
+                old_se = _se * torch.exp(_max_logits - new_max_logits)
                 exp_weights = torch.exp(logits - new_max_logits[:, :, None])
-                curr_lse = exp_weights.sum(dim=-1)
-                new_lse = _lse * ratio + curr_lse
+                new_se = old_se + exp_weights.sum(dim=-1)
 
                 if sample:
                     rand = torch.logit(hl.rand(logits.shape, seed=seed, device=q.device))
@@ -82,17 +81,21 @@ def _sparse_attn_fwd(
                         adj[tile_b, tile_q, tile_k] = sparse_mask & causal_mask
                     else:
                         adj[tile_b, tile_q, tile_k] = sparse_mask
-                weights = torch.where(sparse_mask, exp_weights, 0)
-                curr_out = torch.matmul(weights, v[tile_b, tile_q, :])
-                out_old = _lse[:, :, None] * out[tile_b, tile_q, :] * ratio[:, :, None]
-                out[tile_b, tile_q, :] = (out_old + curr_out) / new_lse[:, :, None]
-
+                weights = torch.where(sparse_mask, exp_weights, 0) / new_se[:, :, None]
+                out_old = (old_se / new_se)[:, :, None] * out[tile_b, tile_q, :]
+                out[tile_b, tile_q, :] = torch.baddbmm(out_old, weights, v[tile_b, tile_k, :].float())
                 _max_logits = new_max_logits
-                _lse = new_lse
-            lse[tile_b, tile_q] = _lse
+                _se = new_se
+            se[tile_b, tile_q] = _se
             max_logits[tile_b, tile_q] = _max_logits
     p_mask_avg.div_(count)
-    return out.view(B, nh, T, hs), p_mask_avg.view(B, nh), adj, max_logits, lse
+    return (
+        out.view(B, nh, T, hs).to(dtype=q.dtype),
+        p_mask_avg.view(B, nh).to(dtype=q.dtype),
+        adj,
+        max_logits,
+        se
+    )
 
 
 @helion.kernel(

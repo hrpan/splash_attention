@@ -242,19 +242,62 @@ splash_attention = SplashAttention.apply
 
 if __name__ == '__main__':
 
-    eps = 1e-2  # from helion puzzle
+    eps = 1e-2  # for FP32
 
-    q, k, v = torch.randn(3, 1, 2, 10, 16, device='cuda', dtype=torch.float64).unbind(0)
+    q, k, v = torch.randn(3, 1, 2, 10, 16, device='cuda', dtype=torch.float32).unbind(0)
     mask_size = q.size(-3) * q.size(-2) * q.size(-2)
 
     # causal attention test
     with torch.no_grad():
         out, p_mask, adj = splash_attention(q, k, v, True, False, True)
         gold_out, gold_p_mask, gold_adj = sparse_attention._sparse_attention_torch(q, k, v, True, False, True)
-    print('### causal=True sample=False forward test: ')
+    print('###\n### causal=True sample=False forward test (FP32)\n###')
     out_diff = (out - gold_out).abs().max().item()
     assert torch.allclose(out, gold_out, atol=eps, rtol=eps), f'out failed abs max: {out_diff:.4f}'
     print('out passed with abs diff:', out_diff)
+    mask_diff = (p_mask - gold_p_mask).abs().max().item()
+    assert torch.allclose(p_mask, gold_p_mask, atol=eps, rtol=eps), f'mask failed abs max: {mask_diff:.4f}'
+    print('expected mask passed with abs diff:', mask_diff)
+    mask_same_count = (adj == gold_adj).sum()
+    print(f'mask pass rate: {100 * mask_same_count/mask_size:.4f}%')
+
+    # noncausal attention test
+    with torch.no_grad():
+        out, p_mask, adj = splash_attention(q, k, v, False, False, True)
+        gold_out, gold_p_mask, gold_adj = sparse_attention._sparse_attention_torch(q, k, v, False, False, True)
+    print('###\n### causal=False sample=False forward test (FP32)\n###')
+    out_diff = (out - gold_out).abs().max().item()
+    assert torch.allclose(out, gold_out, atol=eps, rtol=eps), f'out failed abs max: {out_diff:.4f}'
+    print('out passed with abs diff:', (gold_out - out).abs().max())
+    mask_diff = (p_mask - gold_p_mask).abs().max().item()
+    assert torch.allclose(p_mask, gold_p_mask, atol=eps, rtol=eps), f'mask failed abs max: {mask_diff:.4f}'
+    print('expected mask passed with abs diff:', mask_diff)
+    mask_same_count = (adj == gold_adj).sum()
+    print(f'mask pass rate: {100 * mask_same_count/mask_size:.4f}%')
+
+    q, k, v = torch.randn(3, 1, 2, 10, 16, device='cuda', dtype=torch.bfloat16).unbind(0)
+    # causal attention test
+    with torch.no_grad():
+        out, p_mask, adj = splash_attention(q, k, v, True, False, True)
+        gold_out, gold_p_mask, gold_adj = sparse_attention._sparse_attention_torch(q, k, v, True, False, True)
+    print('###\n### causal=True sample=False forward test (BF16)\n###')
+    out_diff = (out - gold_out).abs().max().item()
+    assert torch.allclose(out, gold_out, atol=eps, rtol=eps), f'out failed abs max: {out_diff:.4f}'
+    print('out passed with abs diff:', out_diff)
+    mask_diff = (p_mask - gold_p_mask).abs().max().item()
+    assert torch.allclose(p_mask, gold_p_mask, atol=eps, rtol=eps), f'mask failed abs max: {mask_diff:.4f}'
+    print('expected mask passed with abs diff:', mask_diff)
+    mask_same_count = (adj == gold_adj).sum()
+    print(f'mask pass rate: {100 * mask_same_count/mask_size:.4f}%')
+
+    # noncausal attention test
+    with torch.no_grad():
+        out, p_mask, adj = splash_attention(q, k, v, False, False, True)
+        gold_out, gold_p_mask, gold_adj = sparse_attention._sparse_attention_torch(q, k, v, False, False, True)
+    print('###\n### causal=False sample=False forward test (BF16)\n###')
+    out_diff = (out - gold_out).abs().max().item()
+    assert torch.allclose(out, gold_out, atol=eps, rtol=eps), f'out failed abs max: {out_diff:.4f}'
+    print('out passed with abs diff:', (gold_out - out).abs().max())
     mask_diff = (p_mask - gold_p_mask).abs().max().item()
     assert torch.allclose(p_mask, gold_p_mask, atol=eps, rtol=eps), f'mask failed abs max: {mask_diff:.4f}'
     print('expected mask passed with abs diff:', mask_diff)
@@ -265,27 +308,13 @@ if __name__ == '__main__':
     # no gold comparison because rng
     with torch.no_grad():
         out, p_mask, adj = splash_attention(q, k, v, True, True, True)
-    print('### causal sample forward passed')
-
-    # noncausal attention test
-    with torch.no_grad():
-        out, p_mask, adj = splash_attention(q, k, v, False, False, True)
-        gold_out, gold_p_mask, gold_adj = sparse_attention._sparse_attention_torch(q, k, v, False, False, True)
-    print('### noncausal forward test: ')
-    out_diff = (out - gold_out).abs().max().item()
-    assert torch.allclose(out, gold_out, atol=eps, rtol=eps), f'out failed abs max: {out_diff:.4f}'
-    print('out passed with abs diff:', (gold_out - out).abs().max())
-    mask_diff = (p_mask - gold_p_mask).abs().max().item()
-    assert torch.allclose(p_mask, gold_p_mask, atol=eps, rtol=eps), f'mask failed abs max: {mask_diff:.4f}'
-    print('expected mask passed with abs diff:', mask_diff)
-    mask_same_count = (adj == gold_adj).sum()
-    print(f'mask pass rate: {100 * mask_same_count/mask_size:.4f}%')
+    print('###\n### causal=True sample=True forward passed\n###')
 
     # noncausal attention sample test
     # no gold comparison because rng
     with torch.no_grad():
         out, p_mask, adj = splash_attention(q, k, v, False, True, True)
-    print('### causal sample forward passed')
+    print('###\n### causal=False sample=True forward passed\n###')
 
     # backward tests
     q, k, v = torch.randn(3, 1, 2, 10, 16, device='cuda', dtype=torch.float32).unbind(0)
@@ -302,7 +331,7 @@ if __name__ == '__main__':
     gold_out, gold_p_mask, gold_adj = sparse_attention._sparse_attention_torch(q2, k2, v2, False, False, False)
     (out.sum() + p_mask.sum()).backward()
     (gold_out.sum() + gold_p_mask.sum()).backward()
-    print('### noncausal backward test: ')
+    print('###\n### causal=False sample=False backward test (FP32)\n###')
     grad_diff = (q.grad - q2.grad).abs().max()
     assert torch.allclose(q.grad, q2.grad, atol=eps, rtol=eps), f'q.grad failed abs max: {grad_diff:.4f}'
     print('q.grad passed with abs diff:', grad_diff)
@@ -324,7 +353,56 @@ if __name__ == '__main__':
     gold_out, gold_p_mask, gold_adj = sparse_attention._sparse_attention_torch(q2, k2, v2, True, False, False)
     (out.sum() + p_mask.sum()).backward()
     (gold_out.sum() + gold_p_mask.sum()).backward()
-    print('### causal backward test: ')
+    print('###\n### causal=True sample=False backward test (FP32)\n###')
+    grad_diff = (q.grad - q2.grad).abs().max()
+    assert torch.allclose(q.grad, q2.grad, atol=eps, rtol=eps), f'q.grad failed abs max: {grad_diff:.4f}'
+    print('q.grad passed with abs diff:', grad_diff)
+    grad_diff = (k.grad - k2.grad).abs().max()
+    assert torch.allclose(k.grad, k2.grad, atol=eps, rtol=eps), f'k.grad failed abs max: {grad_diff:.4f}'
+    print('k.grad passed with abs diff:', grad_diff)
+    grad_diff = (v.grad - v2.grad).abs().max()
+    assert torch.allclose(v.grad, v2.grad, atol=eps, rtol=eps), f'v.grad failed abs max: {grad_diff:.4f}'
+    print('v.grad passed with abs diff:', grad_diff)
+
+    eps = 1e-1  # for BF16
+
+    q, k, v = torch.randn(3, 1, 2, 10, 16, device='cuda', dtype=torch.bfloat16).unbind(0)
+    q.requires_grad = True
+    k.requires_grad = True
+    v.requires_grad = True
+    q2 = q.detach().clone()
+    k2 = k.detach().clone()
+    v2 = v.detach().clone()
+    q2.requires_grad = True
+    k2.requires_grad = True
+    v2.requires_grad = True
+    out, p_mask, adj = splash_attention(q, k, v, False, False, False)
+    gold_out, gold_p_mask, gold_adj = sparse_attention._sparse_attention_torch(q2, k2, v2, False, False, False)
+    (out.sum() + p_mask.sum()).backward()
+    (gold_out.sum() + gold_p_mask.sum()).backward()
+    print('###\n### causal=False sample=False backward test (BF16)\n###')
+    grad_diff = (q.grad - q2.grad).abs().max()
+    assert torch.allclose(q.grad, q2.grad, atol=eps, rtol=eps), f'q.grad failed abs max: {grad_diff:.4f}'
+    print('q.grad passed with abs diff:', grad_diff)
+    grad_diff = (k.grad - k2.grad).abs().max()
+    assert torch.allclose(k.grad, k2.grad, atol=eps, rtol=eps), f'k.grad failed abs max: {grad_diff:.4f}'
+    print('k.grad passed with abs diff:', grad_diff)
+    grad_diff = (v.grad - v2.grad).abs().max()
+    assert torch.allclose(v.grad, v2.grad, atol=eps, rtol=eps), f'v.grad failed abs max: {grad_diff:.4f}'
+    print('v.grad passed with abs diff:', grad_diff)
+
+    q.grad.zero_()
+    k.grad.zero_()
+    v.grad.zero_()
+    q2.grad.zero_()
+    k2.grad.zero_()
+    v2.grad.zero_()
+
+    out, p_mask, adj = splash_attention(q, k, v, True, False, False)
+    gold_out, gold_p_mask, gold_adj = sparse_attention._sparse_attention_torch(q2, k2, v2, True, False, False)
+    (out.sum() + p_mask.sum()).backward()
+    (gold_out.sum() + gold_p_mask.sum()).backward()
+    print('###\n### causal=True sample=False backward test (BF16)\n###')
     grad_diff = (q.grad - q2.grad).abs().max()
     assert torch.allclose(q.grad, q2.grad, atol=eps, rtol=eps), f'q.grad failed abs max: {grad_diff:.4f}'
     print('q.grad passed with abs diff:', grad_diff)

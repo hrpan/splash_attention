@@ -20,10 +20,11 @@ def _sparse_attn_fwd(
     q: torch.Tensor,
     k: torch.Tensor,
     v: torch.Tensor,
-    seed: int,
+    bias_gate: hl.constexpr = 0,
     causal: hl.constexpr = False,
     sample: hl.constexpr = False,
-    return_map: hl.constexpr = False
+    return_map: hl.constexpr = False,
+    seed: int = 0,
 ):
 
     B, nh, T, hs = q.shape
@@ -63,7 +64,7 @@ def _sparse_attn_fwd(
                 if causal:
                     causal_mask = tile_q.index[:, None] >= tile_k.index[None, :]
                     logits = torch.where(causal_mask, logits, float('-inf'))
-                p_mask_avg[tile_b] += logits.sigmoid().sum(dim=-1).sum(dim=-1)
+                p_mask_avg[tile_b] += (logits + bias_gate).sigmoid().sum(dim=-1).sum(dim=-1)
 
                 new_max_logits = torch.maximum(_max_logits, logits.amax(dim=-1))
                 old_se = _se * torch.exp(_max_logits - new_max_logits)
@@ -72,9 +73,9 @@ def _sparse_attn_fwd(
 
                 if sample:
                     rand = torch.logit(hl.rand(logits.shape, seed=seed, device=q.device))
-                    sparse_mask = logits + rand > 0
+                    sparse_mask = logits + rand + bias_gate > 0
                 else:
-                    sparse_mask = logits > 0
+                    sparse_mask = logits + bias_gate > 0
 
                 if return_map:
                     if causal:
@@ -112,9 +113,10 @@ def _sparse_attn_bwd(
     out: torch.Tensor,
     max_logits: torch.Tensor,
     lse: torch.Tensor,
-    seed: int,
+    bias_gate: hl.constexpr = 0.,
     causal: hl.constexpr = False,
     sample: hl.constexpr = False,
+    seed: int = 0,
 ):
 
     B, nh, T, hs = q.shape
@@ -154,12 +156,12 @@ def _sparse_attn_bwd(
 
                 if sample:
                     rand = torch.logit(hl.rand(logits.shape, seed=seed, device=q.device))
-                    sparse_mask = logits + rand > 0
-                    gate = (logits + rand).sigmoid()
-                    gate_prob = logits.sigmoid()
+                    sparse_mask = logits + rand + bias_gate > 0
+                    gate = (logits + rand + bias_gate).sigmoid()
+                    gate_prob = (logits + bias_gate).sigmoid()
                 else:
-                    sparse_mask = logits > 0
-                    gate = logits.sigmoid()
+                    sparse_mask = logits + bias_gate > 0
+                    gate = (logits + bias_gate).sigmoid()
                     gate_prob = gate
 
                 attn_weights = torch.exp(logits - _max_logits[:, :, None]) / _lse[:, :, None]
@@ -198,7 +200,7 @@ def _sparse_attn_bwd(
 
 class SplashAttention(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, q, k, v, causal: bool = False, sample: bool = False, return_map: bool = False):
+    def forward(ctx, q, k, v, bias_gate: float = 0, causal: bool = False, sample: bool = False, return_map: bool = False):
 
         assert q.shape == k.shape and k.shape == v.shape
 
@@ -206,12 +208,13 @@ class SplashAttention(torch.autograd.Function):
         k = k.contiguous()
         v = v.contiguous()
 
-        seed = random.randint(0, 2 ** 31)
-        ctx.seed = seed
+        ctx.bias_gate = bias_gate
         ctx.causal = causal
         ctx.sample = sample
+        seed = random.randint(0, 2 ** 31)
+        ctx.seed = seed
 
-        out, p_mask, adj, max_logits, lse = _sparse_attn_fwd(q, k, v, seed, causal, sample, return_map)
+        out, p_mask, adj, max_logits, lse = _sparse_attn_fwd(q, k, v, bias_gate, causal, sample, return_map, seed)
 
         ctx.save_for_backward(q, k, v, out, p_mask, max_logits, lse)
 
@@ -224,18 +227,19 @@ class SplashAttention(torch.autograd.Function):
     def backward(ctx, grad_out, grad_p_mask, dummy):
 
         q, k, v, out, p_mask, max_logits, lse = ctx.saved_tensors
-        seed = ctx.seed
+        bias_gate = ctx.bias_gate
         causal = ctx.causal
         sample = ctx.sample
+        seed = ctx.seed
 
         grad_q, grad_k, grad_v = _sparse_attn_bwd(
             grad_out.contiguous(),
             grad_p_mask.contiguous(),
-            q, k, v, out, max_logits, lse,
-            seed, causal, sample
+            q, k, v, out, max_logits, lse, bias_gate,
+            causal, sample, seed
         )
 
-        return grad_q, grad_k, grad_v, None, None, None
+        return grad_q, grad_k, grad_v, None, None, None, None
 
 
 splash_attention = SplashAttention.apply
@@ -245,12 +249,13 @@ if __name__ == '__main__':
     eps = 1e-2  # for FP32
 
     q, k, v = torch.randn(3, 1, 2, 10, 16, device='cuda', dtype=torch.float32).unbind(0)
+    bias_gate = 1.5
     mask_size = q.size(-3) * q.size(-2) * q.size(-2)
 
     # causal attention test
     with torch.no_grad():
-        out, p_mask, adj = splash_attention(q, k, v, True, False, True)
-        gold_out, gold_p_mask, gold_adj = sparse_attention._sparse_attention_torch(q, k, v, True, False, True)
+        out, p_mask, adj = splash_attention(q, k, v, bias_gate, True, False, True)
+        gold_out, gold_p_mask, gold_adj = sparse_attention._sparse_attention_torch(q, k, v, bias_gate, True, False, True)
     print('###\n### causal=True sample=False forward test (FP32)\n###')
     out_diff = (out - gold_out).abs().max().item()
     assert torch.allclose(out, gold_out, atol=eps, rtol=eps), f'out failed abs max: {out_diff:.4f}'
@@ -263,8 +268,8 @@ if __name__ == '__main__':
 
     # noncausal attention test
     with torch.no_grad():
-        out, p_mask, adj = splash_attention(q, k, v, False, False, True)
-        gold_out, gold_p_mask, gold_adj = sparse_attention._sparse_attention_torch(q, k, v, False, False, True)
+        out, p_mask, adj = splash_attention(q, k, v, bias_gate, False, False, True)
+        gold_out, gold_p_mask, gold_adj = sparse_attention._sparse_attention_torch(q, k, v, bias_gate, False, False, True)
     print('###\n### causal=False sample=False forward test (FP32)\n###')
     out_diff = (out - gold_out).abs().max().item()
     assert torch.allclose(out, gold_out, atol=eps, rtol=eps), f'out failed abs max: {out_diff:.4f}'
@@ -278,8 +283,8 @@ if __name__ == '__main__':
     q, k, v = torch.randn(3, 1, 2, 10, 16, device='cuda', dtype=torch.bfloat16).unbind(0)
     # causal attention test
     with torch.no_grad():
-        out, p_mask, adj = splash_attention(q, k, v, True, False, True)
-        gold_out, gold_p_mask, gold_adj = sparse_attention._sparse_attention_torch(q, k, v, True, False, True)
+        out, p_mask, adj = splash_attention(q, k, v, bias_gate, True, False, True)
+        gold_out, gold_p_mask, gold_adj = sparse_attention._sparse_attention_torch(q, k, v, bias_gate, True, False, True)
     print('###\n### causal=True sample=False forward test (BF16)\n###')
     out_diff = (out - gold_out).abs().max().item()
     assert torch.allclose(out, gold_out, atol=eps, rtol=eps), f'out failed abs max: {out_diff:.4f}'
@@ -292,8 +297,8 @@ if __name__ == '__main__':
 
     # noncausal attention test
     with torch.no_grad():
-        out, p_mask, adj = splash_attention(q, k, v, False, False, True)
-        gold_out, gold_p_mask, gold_adj = sparse_attention._sparse_attention_torch(q, k, v, False, False, True)
+        out, p_mask, adj = splash_attention(q, k, v, bias_gate, False, False, True)
+        gold_out, gold_p_mask, gold_adj = sparse_attention._sparse_attention_torch(q, k, v, bias_gate, False, False, True)
     print('###\n### causal=False sample=False forward test (BF16)\n###')
     out_diff = (out - gold_out).abs().max().item()
     assert torch.allclose(out, gold_out, atol=eps, rtol=eps), f'out failed abs max: {out_diff:.4f}'
@@ -307,13 +312,13 @@ if __name__ == '__main__':
     # causal attention sample test
     # no gold comparison because rng
     with torch.no_grad():
-        out, p_mask, adj = splash_attention(q, k, v, True, True, True)
+        out, p_mask, adj = splash_attention(q, k, v, bias_gate, True, True, True)
     print('###\n### causal=True sample=True forward passed\n###')
 
     # noncausal attention sample test
     # no gold comparison because rng
     with torch.no_grad():
-        out, p_mask, adj = splash_attention(q, k, v, False, True, True)
+        out, p_mask, adj = splash_attention(q, k, v, bias_gate, False, True, True)
     print('###\n### causal=False sample=True forward passed\n###')
 
     # backward tests
@@ -327,8 +332,8 @@ if __name__ == '__main__':
     q2.requires_grad = True
     k2.requires_grad = True
     v2.requires_grad = True
-    out, p_mask, adj = splash_attention(q, k, v, False, False, False)
-    gold_out, gold_p_mask, gold_adj = sparse_attention._sparse_attention_torch(q2, k2, v2, False, False, False)
+    out, p_mask, adj = splash_attention(q, k, v, bias_gate, False, False, False)
+    gold_out, gold_p_mask, gold_adj = sparse_attention._sparse_attention_torch(q2, k2, v2, bias_gate, False, False, False)
     (out.sum() + p_mask.sum()).backward()
     (gold_out.sum() + gold_p_mask.sum()).backward()
     print('###\n### causal=False sample=False backward test (FP32)\n###')
@@ -349,8 +354,8 @@ if __name__ == '__main__':
     k2.grad.zero_()
     v2.grad.zero_()
 
-    out, p_mask, adj = splash_attention(q, k, v, True, False, False)
-    gold_out, gold_p_mask, gold_adj = sparse_attention._sparse_attention_torch(q2, k2, v2, True, False, False)
+    out, p_mask, adj = splash_attention(q, k, v, bias_gate, True, False, False)
+    gold_out, gold_p_mask, gold_adj = sparse_attention._sparse_attention_torch(q2, k2, v2, bias_gate, True, False, False)
     (out.sum() + p_mask.sum()).backward()
     (gold_out.sum() + gold_p_mask.sum()).backward()
     print('###\n### causal=True sample=False backward test (FP32)\n###')
@@ -376,8 +381,8 @@ if __name__ == '__main__':
     q2.requires_grad = True
     k2.requires_grad = True
     v2.requires_grad = True
-    out, p_mask, adj = splash_attention(q, k, v, False, False, False)
-    gold_out, gold_p_mask, gold_adj = sparse_attention._sparse_attention_torch(q2, k2, v2, False, False, False)
+    out, p_mask, adj = splash_attention(q, k, v, bias_gate, False, False, False)
+    gold_out, gold_p_mask, gold_adj = sparse_attention._sparse_attention_torch(q2, k2, v2, bias_gate, False, False, False)
     (out.sum() + p_mask.sum()).backward()
     (gold_out.sum() + gold_p_mask.sum()).backward()
     print('###\n### causal=False sample=False backward test (BF16)\n###')
@@ -398,8 +403,8 @@ if __name__ == '__main__':
     k2.grad.zero_()
     v2.grad.zero_()
 
-    out, p_mask, adj = splash_attention(q, k, v, True, False, False)
-    gold_out, gold_p_mask, gold_adj = sparse_attention._sparse_attention_torch(q2, k2, v2, True, False, False)
+    out, p_mask, adj = splash_attention(q, k, v, bias_gate, True, False, False)
+    gold_out, gold_p_mask, gold_adj = sparse_attention._sparse_attention_torch(q2, k2, v2, bias_gate, True, False, False)
     (out.sum() + p_mask.sum()).backward()
     (gold_out.sum() + gold_p_mask.sum()).backward()
     print('###\n### causal=True sample=False backward test (BF16)\n###')

@@ -51,7 +51,7 @@ class SparseSelfAttention(nn.Module):
         return y, att
 
 
-def _sparse_attention_torch(q, k, v, causal, sample, return_att):
+def _sparse_attention_torch(q, k, v, bias_gate, causal, sample, return_att):
     # manual implementation of attention
     att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
 
@@ -64,7 +64,8 @@ def _sparse_attention_torch(q, k, v, causal, sample, return_att):
     else:
         count = q.size(-2) ** 2
 
-    edge_samples = gumbel_sample(att, sample=sample)
+    att_gate = att + bias_gate
+    edge_samples = gumbel_sample(att_gate, sample=sample)
 
     sm_att = F.softmax(att, dim=-1)
     masked_att_weights = sm_att * edge_samples
@@ -72,9 +73,9 @@ def _sparse_attention_torch(q, k, v, causal, sample, return_att):
     # masked_att_weights = self.attn_dropout(masked_att_weights)
     y = masked_att_weights @ v  # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
 
-    adj = att > 0
+    adj = att_gate > 0
 
-    return y, att.sigmoid().sum(dim=[-1, -2]) / count, adj
+    return y, att_gate.sigmoid().sum(dim=[-1, -2]) / count, adj
 
 
 def gumbel_sample(x: torch.Tensor, sample: bool = False) -> torch.Tensor:

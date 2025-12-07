@@ -1,0 +1,21 @@
+[project]
+name = "splash_attention"
+version = "0.1.0"
+description = "PyTorch Helion kernel for sparse attention"
+readme = "README.md"
+license = {file = "LICENSE"}
+authors = [{name="hpan", email="hpan@tuebingen.mpg.de"}]
+dependencies = [
+    "helion>=0.2.5",
+    "torch>=2.9",
+]
+
+[project.urls]
+Homepage = "https://github.com/hrpan/splash_attention"
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]

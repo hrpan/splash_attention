@@ -9,6 +9,7 @@ EPS_BF16 = 1e-1
 IN_SHAPE = (4, 8, 64, 32)
 
 
+@pytest.mark.fwd
 @pytest.mark.parametrize('dtype', ['BF16', 'FP32'])
 @pytest.mark.parametrize('causal', [False, True])
 @pytest.mark.parametrize('sample', [False, True])
@@ -42,6 +43,7 @@ def test_fwd(dtype, causal, sample, bias):
     print(f'mask pass rate: {100 * mask_pass_rate:.4f}%')
 
 
+@pytest.mark.bwd
 @pytest.mark.parametrize('dtype', ['BF16', 'FP32'])
 @pytest.mark.parametrize('causal', [False, True])
 @pytest.mark.parametrize('sample', [False, True])

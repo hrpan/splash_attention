@@ -39,8 +39,7 @@ def _sparse_attn_fwd(
     else:
         adj = None
 
-    max_logits = torch.full((B * nh, T), float('-inf'), device=q.device, dtype=torch.float32)
-    se = torch.full((B * nh, T), 0, device=q.device, dtype=torch.float32)
+    lse = torch.zeros((B * nh, T), device=q.device, dtype=torch.float32)
 
     # count number of non-masked elements for averaging sparsity (trivial for now, but can be useful for future)
     if causal:
@@ -52,8 +51,8 @@ def _sparse_attn_fwd(
 
     for tile_b in hl.tile(B * nh):
         for tile_q in hl.tile(T):
-            _max_logits = max_logits[tile_b, tile_q]
-            _se = se[tile_b, tile_q]
+            max_logits = hl.full([tile_b, tile_q], float('-inf'), device=q.device, dtype=torch.float32)
+            sumexp = hl.zeros([tile_b, tile_q], device=q.device, dtype=torch.float32)
             qs = q[tile_b, tile_q, :].float()
             for tile_k in hl.tile(T):
                 ks = k[tile_b, tile_k, :].float()
@@ -64,10 +63,10 @@ def _sparse_attn_fwd(
                     logits = torch.where(causal_mask, logits, float('-inf'))
                 p_mask_avg[tile_b] += (logits + bias_gate).sigmoid().sum(dim=-1).sum(dim=-1)
 
-                new_max_logits = torch.maximum(_max_logits, logits.amax(dim=-1))
-                old_se = _se * torch.exp(_max_logits - new_max_logits)
+                new_max_logits = torch.maximum(max_logits, logits.amax(dim=-1))
+                old_sumexp = sumexp * torch.exp(max_logits - new_max_logits)
                 exp_weights = torch.exp(logits - new_max_logits[:, :, None])
-                new_se = old_se + exp_weights.sum(dim=-1)
+                new_sumexp = old_sumexp + exp_weights.sum(dim=-1)
 
                 if sample:
                     rand = torch.logit(hl.rand(logits.shape, seed=seed, device=q.device))
@@ -80,13 +79,12 @@ def _sparse_attn_fwd(
                         adj[tile_b, tile_q, tile_k] = sparse_mask & causal_mask
                     else:
                         adj[tile_b, tile_q, tile_k] = sparse_mask
-                weights = torch.where(sparse_mask, exp_weights, 0) / new_se[:, :, None]
-                out_old = (old_se / new_se)[:, :, None] * out[tile_b, tile_q, :]
+                weights = torch.where(sparse_mask, exp_weights, 0) / new_sumexp[:, :, None]
+                out_old = (old_sumexp / new_sumexp)[:, :, None] * out[tile_b, tile_q, :]
                 out[tile_b, tile_q, :] = torch.baddbmm(out_old, weights, v[tile_b, tile_k, :].float())
-                _max_logits = new_max_logits
-                _se = new_se
-            se[tile_b, tile_q] = _se
-            max_logits[tile_b, tile_q] = _max_logits
+                max_logits = new_max_logits
+                sumexp = new_sumexp
+            lse[tile_b, tile_q] = max_logits + torch.log(sumexp)
     p_mask_avg.div_(count)
 
     if return_map:
@@ -216,9 +214,9 @@ class SplashAttention(torch.autograd.Function):
         seed = random.randint(0, 2 ** 31)
         ctx.seed = seed
 
-        out, p_mask, adj, max_logits, lse = _sparse_attn_fwd(q, k, v, bias_gate, causal, sample, return_map, seed)
+        out, p_mask, adj, lse = _sparse_attn_fwd(q, k, v, bias_gate, causal, sample, return_map, seed)
 
-        ctx.save_for_backward(q, k, v, out, p_mask, max_logits, lse)
+        ctx.save_for_backward(q, k, v, out, p_mask, lse)
 
         if isinstance(adj, torch.Tensor):
             ctx.mark_non_differentiable(adj)

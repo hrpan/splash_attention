@@ -106,13 +106,13 @@ def _sparse_attn_fwd(
 def _sparse_attn_bwd(
     grad_out: torch.Tensor,
     grad_mask: torch.Tensor,
+    go: torch.Tensor,
     q: torch.Tensor,
     k: torch.Tensor,
     v: torch.Tensor,
     out: torch.Tensor,
-    max_logits: torch.Tensor,
     lse: torch.Tensor,
-    bias_gate: hl.constexpr = 0.,
+    bias_gate: float = 0.,
     causal: hl.constexpr = False,
     sample: hl.constexpr = False,
     seed: int = 0,
@@ -128,6 +128,8 @@ def _sparse_attn_bwd(
 
     grad_out = grad_out.view(-1, T, hs)
     grad_mask = grad_mask.view(-1)
+    go = go.view(-1, T, 1)
+    lse = lse.view(-1, T, 1)
 
     scale = 1 / math.sqrt(q.size(-1))
     grad_q = torch.zeros_like(q, dtype=torch.float32)
@@ -140,10 +142,12 @@ def _sparse_attn_bwd(
         count = float(T * T)
 
     for tile_b in hl.tile(B * nh):
+        _grad_mask = grad_mask[tile_b].float()
         for tile_q in hl.tile(T):
-            _max_logits = max_logits[tile_b, tile_q]
-            _lse = lse[tile_b, tile_q]
+            _lse = lse[tile_b, tile_q, :]
             qs = q[tile_b, tile_q, :].float()
+            _grad_out = grad_out[tile_b, tile_q, :].float()
+            _go = go[tile_b, tile_q, :].float()
 
             for tile_k in hl.tile(T):
                 ks = k[tile_b, tile_k, :].float()
@@ -163,29 +167,26 @@ def _sparse_attn_bwd(
                     gate = (logits + bias_gate).sigmoid()
                     gate_prob = gate
 
-                attn_weights = torch.exp(logits - _max_logits[:, :, None]) / _lse[:, :, None]
+                attn_weights = torch.exp(logits - _lse)
                 final_weights = torch.where(sparse_mask, attn_weights, 0)
 
                 grad_v[tile_b, tile_k, :] = torch.baddbmm(
                     grad_v[tile_b, tile_k, :],
                     final_weights.transpose(-1, -2),
-                    grad_out[tile_b, tile_q, :].float(),
+                    _grad_out,
                 )
 
                 gvt = torch.matmul(
-                    grad_out[tile_b, tile_q, :].float(),
+                    _grad_out,
                     v[tile_b, tile_k, :].transpose(-1, -2).float()
                 )
-                go = (
-                    grad_out[tile_b, tile_q, :].float() * out[tile_b, tile_q, :].float()
-                ).sum(dim=-1)[:, :, None]
 
-                grad_score = attn_weights * (((gate * (1 - gate)) + sparse_mask.to(q.dtype)) * gvt - go) * scale
+                grad_score = attn_weights * (((gate * (1 - gate)) + sparse_mask.to(q.dtype)) * gvt - _go)
 
                 # sparsity bwd
-                grad_sigmoid = grad_mask[tile_b, None, None].float() * gate_prob * (1 - gate_prob) * scale / count
+                grad_sigmoid = _grad_mask[:, None, None] * gate_prob * (1 - gate_prob) / count
 
-                grad_both = grad_score + grad_sigmoid
+                grad_both = scale * (grad_score + grad_sigmoid)
 
                 grad_q[tile_b, tile_q, :] = torch.baddbmm(grad_q[tile_b, tile_q, :], grad_both, ks)
                 grad_k[tile_b, tile_k, :] = torch.baddbmm(grad_k[tile_b, tile_k, :], grad_both.transpose(-1, -2), qs)
@@ -225,16 +226,18 @@ class SplashAttention(torch.autograd.Function):
     @staticmethod
     def backward(ctx, grad_out, grad_p_mask, dummy):
 
-        q, k, v, out, p_mask, max_logits, lse = ctx.saved_tensors
+        q, k, v, out, p_mask, lse = ctx.saved_tensors
         bias_gate = ctx.bias_gate
         causal = ctx.causal
         sample = ctx.sample
         seed = ctx.seed
 
+        go = (grad_out[..., None, :] @ out[..., None]).squeeze([-1, -2])
+
         grad_q, grad_k, grad_v = _sparse_attn_bwd(
             grad_out.contiguous(),
             grad_p_mask.contiguous(),
-            q, k, v, out, max_logits, lse, bias_gate,
+            go, q, k, v, out, lse, bias_gate,
             causal, sample, seed
         )
 

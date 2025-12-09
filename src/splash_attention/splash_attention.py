@@ -94,8 +94,7 @@ def _sparse_attn_fwd(
         out.view(B, nh, T, hs).to(dtype=q.dtype),
         p_mask_avg.view(B, nh).to(dtype=q.dtype),
         adj,
-        max_logits,
-        se
+        lse
     )
 
 

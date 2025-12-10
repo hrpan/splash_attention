@@ -1,6 +1,6 @@
 [project]
 name = "splash_attention"
-version = "0.1.0"
+version = "0.2.0"
 description = "PyTorch Helion kernel for sparse attention"
 readme = "README.md"
 license = {file = "LICENSE"}
@@ -17,5 +17,21 @@ Homepage = "https://github.com/hrpan/splash_attention"
 requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
+[tool.setuptools]
+include-package-data = true
+
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+splash_attention = ["configs/*.json"]
+
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+python_files = "test_*.py"
+markers = [
+    "fwd: tests related to forward-pass behavior",
+    "bwd: tests related to backward-pass behavior",
+]

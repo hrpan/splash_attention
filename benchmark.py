@@ -1,6 +1,5 @@
 import torch
-from splash_attention import splash_attention
-from sparse_attention import _sparse_attention_torch
+from splash_attention import sparse_attention_naive, splash_attention
 
 
 def benchmark(fn, x, name="", repeat=50, warmup=10):
@@ -44,12 +43,12 @@ def benchmark(fn, x, name="", repeat=50, warmup=10):
 
 # Example usage ----------------
 
-lens = [10, 100, 1000]
+lens = [2 ** n for n in range(5, 12)]
 
 for _len in lens:
     q = k = v = torch.randn((10, 10, _len, 10), device="cuda")
 
-    inp = (q, k, v, False, False, False)
+    inp = (q, k, v, 0, False, False, False)
 
     benchmark(splash_attention, inp, name=f"Splash len: {_len}")
-    benchmark(_sparse_attention_torch, inp, name=f"Naive len: {_len}")
+    benchmark(sparse_attention_naive, inp, name=f"Naive len: {_len}")

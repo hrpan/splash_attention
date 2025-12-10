@@ -8,12 +8,18 @@ import math
 
 import random
 
+from importlib.resources import files
 
-@helion.kernel(
-    autotune_effort="none",
-    static_shapes=False,
-    ignore_warnings=[helion.exc.TensorOperationInWrapper]
-)
+
+def load_configs(prefix='fwd'):
+    config_dir = files("splash_attention") / "configs"
+    configs = []
+    for entry in config_dir.iterdir():
+        if entry.is_file() and entry.name.endswith(".json") and prefix in entry.name:
+            configs.append(helion.Config.load(entry))
+    return configs
+
+
 def _sparse_attn_fwd(
     q: torch.Tensor,
     k: torch.Tensor,
@@ -98,11 +104,21 @@ def _sparse_attn_fwd(
     )
 
 
-@helion.kernel(
-    autotune_effort="none",
+sparse_attn_fwd = helion.kernel(
+    _sparse_attn_fwd,
+    configs=load_configs('fwd'),
     static_shapes=False,
     ignore_warnings=[helion.exc.TensorOperationInWrapper]
 )
+
+sparse_attn_fwd_debug = helion.kernel(
+    _sparse_attn_fwd,
+    autotune_effort='none',
+    static_shapes=False,
+    ignore_warnings=[helion.exc.TensorOperationInWrapper]
+)
+
+
 def _sparse_attn_bwd(
     grad_out: torch.Tensor,
     grad_mask: torch.Tensor,
@@ -198,7 +214,23 @@ def _sparse_attn_bwd(
     )
 
 
+sparse_attn_bwd = helion.kernel(
+    _sparse_attn_bwd,
+    configs=load_configs('bwd'),
+    static_shapes=False,
+    ignore_warnings=[helion.exc.TensorOperationInWrapper]
+)
+
+sparse_attn_bwd_debug = helion.kernel(
+    _sparse_attn_bwd,
+    autotune_effort='none',
+    static_shapes=False,
+    ignore_warnings=[helion.exc.TensorOperationInWrapper]
+)
+
+
 class SplashAttention(torch.autograd.Function):
+
     @staticmethod
     def forward(ctx, q, k, v, bias_gate: float = 0, causal: bool = False, sample: bool = False, return_map: bool = False):
 
@@ -214,7 +246,7 @@ class SplashAttention(torch.autograd.Function):
         seed = random.randint(0, 2 ** 31)
         ctx.seed = seed
 
-        out, p_mask, adj, lse = _sparse_attn_fwd(q, k, v, bias_gate, causal, sample, return_map, seed)
+        out, p_mask, adj, lse = sparse_attn_fwd(q, k, v, bias_gate, causal, sample, return_map, seed)
 
         ctx.save_for_backward(q, k, v, out, p_mask, lse)
 
@@ -234,7 +266,7 @@ class SplashAttention(torch.autograd.Function):
 
         go = (grad_out[..., None, :] @ out[..., None]).squeeze([-1, -2])
 
-        grad_q, grad_k, grad_v = _sparse_attn_bwd(
+        grad_q, grad_k, grad_v = sparse_attn_bwd(
             grad_out.contiguous(),
             grad_p_mask.contiguous(),
             go, q, k, v, out, lse, bias_gate,

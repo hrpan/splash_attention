@@ -6,8 +6,6 @@ import helion.language as hl
 
 import math
 
-import random
-
 from importlib.resources import files
 
 
@@ -232,7 +230,7 @@ sparse_attn_bwd_debug = helion.kernel(
 class SplashAttention(torch.autograd.Function):
 
     @staticmethod
-    def forward(ctx, q, k, v, bias_gate: float = 0, causal: bool = False, sample: bool = False, return_map: bool = False):
+    def forward(ctx, q, k, v, bias_gate: float = 0, causal: bool = False, sample: bool = False, return_map: bool = False, seed: int | None = None):
 
         assert q.shape == k.shape and k.shape == v.shape
 
@@ -243,7 +241,10 @@ class SplashAttention(torch.autograd.Function):
         ctx.bias_gate = bias_gate
         ctx.causal = causal
         ctx.sample = sample
-        seed = random.randint(0, 2 ** 31)
+
+        # Generate seed if not provided using torch.randint (compile-friendly)
+        if seed is None:
+            seed = torch.randint(0, 2**31, (1,)).item()
         ctx.seed = seed
 
         out, p_mask, adj, lse = sparse_attn_fwd(q, k, v, bias_gate, causal, sample, return_map, seed)

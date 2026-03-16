@@ -3,6 +3,14 @@
 Splash Attention is a specialized implementation of the Sparse Attention mechanism introduced in the [SPARTAN](https://arxiv.org/abs/2411.06890) paper.
 It is built using [Helion](https://helionlang.com/index.html), a high-performance domain-specific language (DSL) and compiler for tensor programs.
 
+Sparse Attention is particularly useful for learning interpretable representations.
+An example use case is:
+
+> Florent Draye, Anson Lei, Hsiao‑Ru Pan, Ingmar Posner, Bernhard Schölkopf.
+> *Sparse Attention Post‑Training for Mechanistic Interpretability.*
+> [arXiv preprint arXiv:2512.05865 (2025)](https://arxiv.org/abs/2512.05865).
+
+
 # Benchmark
 
 ![benchmark](imgs/attention_comparison.png)

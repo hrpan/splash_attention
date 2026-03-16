@@ -14,6 +14,12 @@ The requirements are the same as PyTorch Helion.
 * PyTorch 2.9 or later
 * Helion 0.2.6 or later
 
+# Installation
+
+```bash
+pip install git+https://github.com/hrpan/splash_attention.git
+```
+
 # Example Usage
 ```python
 import torch

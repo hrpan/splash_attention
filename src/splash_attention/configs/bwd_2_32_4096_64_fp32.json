@@ -10,7 +10,6 @@
     0
   ],
   "range_warp_specializes": [],
-  "range_num_stages": [],
   "range_multi_buffers": [
     null,
     null,
@@ -18,7 +17,7 @@
   ],
   "range_flattens": [
     null,
-    null,
+    false,
     null
   ],
   "load_eviction_policies": [
@@ -29,8 +28,8 @@
     "",
     "",
     "",
-    "last",
-    "",
+    "first",
+    "first",
     ""
   ],
   "num_warps": 8,
@@ -41,8 +40,8 @@
     "pointer",
     "pointer",
     "pointer",
-    "tensor_descriptor",
-    "tensor_descriptor",
+    "pointer",
+    "pointer",
     "pointer",
     "pointer",
     "pointer",
@@ -50,5 +49,6 @@
     "pointer",
     "pointer"
   ],
-  "pid_type": "flat"
+  "pid_type": "persistent_interleaved",
+  "num_sm_multiplier": 4
 }

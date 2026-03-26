@@ -1,8 +1,8 @@
 {
   "block_sizes": [
     1,
-    64,
-    32
+    128,
+    64
   ],
   "range_unroll_factors": [
     0,
@@ -14,7 +14,7 @@
   "range_multi_buffers": [
     null,
     null,
-    null
+    false
   ],
   "range_flattens": [
     null,
@@ -33,20 +33,20 @@
     "",
     ""
   ],
-  "num_warps": 4,
-  "num_stages": 3,
+  "num_warps": 8,
+  "num_stages": 1,
   "indexing": [
+    "tensor_descriptor",
+    "pointer",
+    "pointer",
+    "tensor_descriptor",
     "pointer",
     "pointer",
     "pointer",
     "pointer",
+    "tensor_descriptor",
     "pointer",
-    "pointer",
-    "pointer",
-    "pointer",
-    "pointer",
-    "pointer",
-    "pointer",
+    "tensor_descriptor",
     "pointer",
     "pointer"
   ],

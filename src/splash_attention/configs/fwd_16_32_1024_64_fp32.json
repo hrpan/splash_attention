@@ -1,8 +1,8 @@
 {
   "block_sizes": [
     1,
-    256,
-    64
+    64,
+    32
   ],
   "range_unroll_factors": [
     0,
@@ -24,20 +24,20 @@
   "load_eviction_policies": [
     "",
     "",
-    "",
+    "first",
     "",
     ""
   ],
-  "num_warps": 16,
+  "num_warps": 2,
   "num_stages": 1,
   "indexing": [
     "pointer",
     "pointer",
     "pointer",
     "pointer",
-    "pointer",
-    "pointer",
     "tensor_descriptor",
+    "pointer",
+    "pointer",
     "pointer"
   ],
   "pid_type": "flat"

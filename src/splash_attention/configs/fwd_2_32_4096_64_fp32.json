@@ -2,7 +2,7 @@
   "block_sizes": [
     1,
     128,
-    64
+    128
   ],
   "range_unroll_factors": [
     0,
@@ -14,33 +14,23 @@
   "range_multi_buffers": [
     null,
     null,
-    false
+    null
   ],
   "range_flattens": [
     null,
     null,
-    true
+    null
   ],
   "load_eviction_policies": [
     "",
     "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
+    "first",
     "",
     ""
   ],
   "num_warps": 8,
   "num_stages": 1,
   "indexing": [
-    "pointer",
-    "pointer",
-    "pointer",
-    "pointer",
-    "pointer",
     "pointer",
     "pointer",
     "pointer",

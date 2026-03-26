@@ -2,7 +2,7 @@
   "block_sizes": [
     1,
     64,
-    64
+    32
   ],
   "range_unroll_factors": [
     0,
@@ -18,21 +18,31 @@
   ],
   "range_flattens": [
     null,
-    null,
-    false
+    false,
+    null
   ],
   "load_eviction_policies": [
-    "last",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
     "",
     "",
     "",
     ""
   ],
   "num_warps": 4,
-  "num_stages": 1,
+  "num_stages": 3,
   "indexing": [
     "pointer",
-    "tensor_descriptor",
+    "pointer",
+    "pointer",
+    "pointer",
+    "pointer",
+    "pointer",
+    "pointer",
     "pointer",
     "pointer",
     "tensor_descriptor",

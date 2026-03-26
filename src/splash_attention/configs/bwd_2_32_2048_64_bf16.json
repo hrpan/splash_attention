@@ -1,20 +1,19 @@
 {
   "block_sizes": [
     1,
-    16,
-    128
+    128,
+    64
   ],
   "range_unroll_factors": [
     0,
-    0,
+    1,
     0
   ],
   "range_warp_specializes": [],
-  "range_num_stages": [],
   "range_multi_buffers": [
     null,
-    true,
-    false
+    null,
+    null
   ],
   "range_flattens": [
     null,
@@ -22,15 +21,25 @@
     null
   ],
   "load_eviction_policies": [
-    "last",
     "",
-    "first",
     "",
-    "first"
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
   ],
-  "num_warps": 2,
-  "num_stages": 1,
+  "num_warps": 8,
+  "num_stages": 4,
   "indexing": [
+    "pointer",
+    "pointer",
+    "pointer",
+    "pointer",
+    "pointer",
     "pointer",
     "pointer",
     "pointer",
@@ -40,5 +49,6 @@
     "pointer",
     "pointer"
   ],
-  "pid_type": "flat"
+  "pid_type": "persistent_interleaved",
+  "num_sm_multiplier": 1
 }

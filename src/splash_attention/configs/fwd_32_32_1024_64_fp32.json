@@ -1,12 +1,12 @@
 {
   "block_sizes": [
     1,
-    16,
-    256
+    128,
+    64
   ],
   "range_unroll_factors": [
     0,
-    1,
+    0,
     0
   ],
   "range_warp_specializes": [],
@@ -18,15 +18,15 @@
   ],
   "range_flattens": [
     null,
-    true,
+    false,
     null
   ],
   "load_eviction_policies": [
     "",
     "",
+    "last",
     "",
-    "",
-    ""
+    "first"
   ],
   "num_warps": 4,
   "num_stages": 1,

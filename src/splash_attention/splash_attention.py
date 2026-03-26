@@ -113,6 +113,9 @@ def _sparse_attn_bwd(
     q: torch.Tensor,
     k: torch.Tensor,
     v: torch.Tensor,
+    grad_q: torch.Tensor,
+    grad_k: torch.Tensor,
+    grad_v: torch.Tensor,
     out: torch.Tensor,
     lse: torch.Tensor,
     bias_gate: float = 0.,
@@ -121,13 +124,9 @@ def _sparse_attn_bwd(
     seed: int = 0,
 ):
 
-    B, nh, T, hs = q.shape
+    B, T, hs = q.shape
 
     out = out.view(-1, T, hs)
-
-    q = q.view(-1, T, hs)
-    k = k.view(-1, T, hs)
-    v = v.view(-1, T, hs)
 
     grad_out = grad_out.view(-1, T, hs)
     grad_mask = grad_mask.view(-1)
@@ -135,16 +134,12 @@ def _sparse_attn_bwd(
     lse = lse.view(-1, T, 1)
 
     scale = 1 / math.sqrt(q.size(-1))
-    grad_q = torch.zeros_like(q, dtype=torch.float32)
-    grad_k = torch.zeros_like(k, dtype=torch.float32)
-    grad_v = torch.zeros_like(v, dtype=torch.float32)
-
     if causal:
         count = float(T * (T + 1) // 2)
     else:
         count = float(T * T)
 
-    for tile_b in hl.tile(B * nh):
+    for tile_b in hl.tile(B):
         _grad_mask = grad_mask[tile_b].float()
         for tile_q in hl.tile(T):
             _lse = lse[tile_b, tile_q, :]
@@ -193,12 +188,6 @@ def _sparse_attn_bwd(
 
                 grad_q[tile_b, tile_q, :] = torch.baddbmm(grad_q[tile_b, tile_q, :], grad_both, ks)
                 grad_k[tile_b, tile_k, :] = torch.baddbmm(grad_k[tile_b, tile_k, :], grad_both.transpose(-1, -2), qs)
-
-    return (
-        grad_q.view(B, nh, T, hs).to(dtype=q.dtype),
-        grad_k.view(B, nh, T, hs).to(dtype=q.dtype),
-        grad_v.view(B, nh, T, hs).to(dtype=q.dtype)
-    )
 
 
 sparse_attn_bwd = helion.kernel(
@@ -278,10 +267,23 @@ class SplashAttention(torch.autograd.Function):
 
         go = (grad_out[..., None, :] @ out[..., None]).squeeze([-1, -2])
 
-        grad_q, grad_k, grad_v = sparse_attn_bwd(
+        B, nh, T, hs = q.shape
+
+        grad_q = torch.zeros_like(q, dtype=torch.float32)
+        grad_k = torch.zeros_like(k, dtype=torch.float32)
+        grad_v = torch.zeros_like(v, dtype=torch.float32)
+
+        sparse_attn_bwd(
             grad_out.contiguous(),
             grad_p_mask.contiguous(),
-            go, q, k, v, out, lse, bias_gate,
+            go,
+            q.view(-1, T, hs),
+            k.view(-1, T, hs),
+            v.view(-1, T, hs),
+            grad_q.view(-1, T, hs),
+            grad_k.view(-1, T, hs),
+            grad_v.view(-1, T, hs),
+            out, lse, bias_gate,
             causal, sample, seed
         )
 

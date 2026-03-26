@@ -111,11 +111,21 @@ def test_bwd(dtype, causal, sample, bias, weight):
     grad_out = torch.full_like(out, 1 - weight)
     grad_p_mask = torch.full_like(p_mask, weight)
     go = (grad_out[..., None, :] @ out[..., None]).squeeze([-1, -2])
-    grad_q, grad_k, grad_v = sparse_attn_bwd_debug(
-        grad_out, grad_p_mask, go,
-        q.to(dtype=_dtype),
-        k.to(dtype=_dtype),
-        v.to(dtype=_dtype),
+
+    grad_q = torch.zeros_like(q, dtype=torch.float32)
+    grad_k = torch.zeros_like(k, dtype=torch.float32)
+    grad_v = torch.zeros_like(v, dtype=torch.float32)
+
+    sparse_attn_bwd_debug(
+        grad_out.contiguous(),
+        grad_p_mask.contiguous(),
+        go,
+        q.view(-1, T, hs).to(dtype=_dtype),
+        k.view(-1, T, hs).to(dtype=_dtype),
+        v.view(-1, T, hs).to(dtype=_dtype),
+        grad_q.view(-1, T, hs),
+        grad_k.view(-1, T, hs),
+        grad_v.view(-1, T, hs),
         out, lse, bias,
         causal, False, 0
     )

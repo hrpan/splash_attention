@@ -22,6 +22,9 @@ def _sparse_attn_fwd(
     q: torch.Tensor,
     k: torch.Tensor,
     v: torch.Tensor,
+    out: torch.Tensor,
+    p_mask: torch.Tensor,
+    lse: torch.Tensor,
     bias_gate: hl.constexpr = 0,
     causal: hl.constexpr = False,
     sample: hl.constexpr = False,
@@ -29,21 +32,14 @@ def _sparse_attn_fwd(
     seed: int = 0,
 ):
 
-    B, nh, T, hs = q.shape
-
-    q = q.view(-1, T, hs)
-    k = k.view(-1, T, hs)
-    v = v.view(-1, T, hs)
+    B, T, hs = q.shape
 
     scale = 1 / math.sqrt(q.size(-1))
-    out = torch.zeros((B * nh, T, hs), device=q.device, dtype=torch.float32)
 
     if return_map:
-        adj = torch.zeros((B * nh, T, T), device=q.device, dtype=torch.bool)
+        adj = torch.zeros((B, T, T), device=q.device, dtype=torch.bool)
     else:
         adj = None
-
-    lse = torch.zeros((B * nh, T), device=q.device, dtype=torch.float32)
 
     # count number of non-masked elements for averaging sparsity (trivial for now, but can be useful for future)
     if causal:
@@ -51,9 +47,7 @@ def _sparse_attn_fwd(
     else:
         count = float(T * T)
 
-    p_mask_avg = torch.zeros((B * nh, ), device=q.device, dtype=torch.float32)
-
-    for tile_b in hl.tile(B * nh):
+    for tile_b in hl.tile(B):
         for tile_q in hl.tile(T):
             max_logits = hl.full([tile_b, tile_q], float('-inf'), device=q.device, dtype=torch.float32)
             sumexp = hl.zeros([tile_b, tile_q], device=q.device, dtype=torch.float32)
@@ -65,7 +59,7 @@ def _sparse_attn_fwd(
                 if causal:
                     causal_mask = tile_q.index[:, None] >= tile_k.index[None, :]
                     logits = torch.where(causal_mask, logits, float('-inf'))
-                p_mask_avg[tile_b] += (logits + bias_gate).sigmoid().sum(dim=-1).sum(dim=-1)
+                p_mask[tile_b] += (logits + bias_gate).sigmoid().sum(dim=-1).sum(dim=-1)
 
                 new_max_logits = torch.maximum(max_logits, logits.amax(dim=-1))
                 old_sumexp = sumexp * torch.exp(max_logits - new_max_logits)
@@ -89,17 +83,12 @@ def _sparse_attn_fwd(
                 max_logits = new_max_logits
                 sumexp = new_sumexp
             lse[tile_b, tile_q] = max_logits + torch.log(sumexp)
-    p_mask_avg.div_(count)
+    p_mask.div_(count)
 
     if return_map:
-        adj = adj.view(B, nh, T, T)
+        adj = adj.view(B, T, T)
 
-    return (
-        out.view(B, nh, T, hs).to(dtype=q.dtype),
-        p_mask_avg.view(B, nh).to(dtype=q.dtype),
-        adj,
-        lse
-    )
+    return adj
 
 
 sparse_attn_fwd = helion.kernel(
@@ -234,9 +223,15 @@ class SplashAttention(torch.autograd.Function):
 
         assert q.shape == k.shape and k.shape == v.shape
 
+        B, nh, T, hs = q.shape
+
         q = q.contiguous()
         k = k.contiguous()
         v = v.contiguous()
+
+        out = torch.zeros((B, nh, T, hs), device=q.device, dtype=torch.float32)
+        p_mask = torch.zeros((B, nh, ), device=q.device, dtype=torch.float32)
+        lse = torch.zeros((B * nh, T), device=q.device, dtype=torch.float32)
 
         ctx.bias_gate = bias_gate
         ctx.causal = causal
@@ -247,14 +242,30 @@ class SplashAttention(torch.autograd.Function):
             seed = torch.randint(0, 2**31, (1,)).item()
         ctx.seed = seed
 
-        out, p_mask, adj, lse = sparse_attn_fwd(q, k, v, bias_gate, causal, sample, return_map, seed)
+        adj = sparse_attn_fwd(
+            q.view(-1, T, hs),
+            k.view(-1, T, hs),
+            v.view(-1, T, hs),
+            out.view(-1, T, hs),
+            p_mask.view(-1),
+            lse,
+            bias_gate,
+            causal,
+            sample,
+            return_map,
+            seed
+        )
 
         ctx.save_for_backward(q, k, v, out, p_mask, lse)
 
         if isinstance(adj, torch.Tensor):
             ctx.mark_non_differentiable(adj)
 
-        return out, p_mask, adj
+        return (
+            out.to(dtype=q.dtype),
+            p_mask.to(dtype=q.dtype),
+            adj
+        )
 
     @staticmethod
     def backward(ctx, grad_out, grad_p_mask, dummy):

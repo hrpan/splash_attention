@@ -8,7 +8,7 @@ from splash_attention.splash_attention import sparse_attn_fwd_debug, sparse_attn
 EPS_FP32 = 1e-2
 EPS_BF16 = 1e-1
 
-IN_SHAPE = (1, 4, 16, 16)
+B, nh, T, hs = IN_SHAPE = (1, 4, 16, 16)
 
 
 @pytest.mark.fwd
@@ -26,14 +26,41 @@ def test_fwd(dtype, causal, sample, bias):
         _eps = EPS_FP32
     q, k, v = torch.rand(3, *IN_SHAPE, device='cuda', dtype=_dtype).unbind(0)
 
+    out = torch.zeros((B, nh, T, hs), device=q.device, dtype=torch.float32)
+    p_mask = torch.zeros((B, nh, ), device=q.device, dtype=torch.float32)
+    lse = torch.zeros((B * nh, T), device=q.device, dtype=torch.float32)
+
     print(f'\n###\n### CAUSAL={causal} SAMPLE={sample} FORWARD ({dtype})\n###')
     if sample:
         with torch.no_grad():
-            _ = sparse_attn_fwd_debug(q, k, v, bias, causal, sample, True)
+            adj = sparse_attn_fwd_debug(
+                q.view(-1, T, hs),
+                k.view(-1, T, hs),
+                v.view(-1, T, hs),
+                out.view(-1, T, hs),
+                p_mask.view(-1),
+                lse,
+                bias,
+                causal,
+                sample,
+                True,
+            )
         return
 
     with torch.no_grad():
-        out, p_mask, adj, _ = sparse_attn_fwd_debug(q, k, v, bias, causal, sample, True)
+        adj = sparse_attn_fwd_debug(
+            q.view(-1, T, hs),
+            k.view(-1, T, hs),
+            v.view(-1, T, hs),
+            out.view(-1, T, hs),
+            p_mask.view(-1),
+            lse,
+            bias,
+            causal,
+            sample,
+            True,
+        ).view(B, nh, T, T)
+
         gold_out, gold_p_mask, gold_adj = sparse_attention_naive(q.double(), k.double(), v.double(), bias, causal, sample, True)
     out_diff = (out.double() - gold_out).abs().max().item()
     assert_close(out, gold_out, atol=_eps, rtol=_eps, check_dtype=False, msg=f'out failed abs max: {out_diff:.4f}')
@@ -64,12 +91,23 @@ def test_bwd(dtype, causal, sample, bias, weight):
     k.requires_grad = True
     v.requires_grad = True
 
-    out, p_mask, adj, lse = sparse_attn_fwd_debug(
-        q.to(dtype=_dtype),
-        k.to(dtype=_dtype),
-        v.to(dtype=_dtype),
-        bias, causal, sample, True
+    out = torch.zeros((B, nh, T, hs), device=q.device, dtype=torch.float32)
+    p_mask = torch.zeros((B, nh, ), device=q.device, dtype=torch.float32)
+    lse = torch.zeros((B * nh, T), device=q.device, dtype=torch.float32)
+
+    _ = sparse_attn_fwd_debug(
+        q.view(-1, T, hs).to(dtype=_dtype),
+        k.view(-1, T, hs).to(dtype=_dtype),
+        v.view(-1, T, hs).to(dtype=_dtype),
+        out.view(-1, T, hs),
+        p_mask.view(-1),
+        lse,
+        bias,
+        causal,
+        sample,
+        True,
     )
+
     grad_out = torch.full_like(out, 1 - weight)
     grad_p_mask = torch.full_like(p_mask, weight)
     go = (grad_out[..., None, :] @ out[..., None]).squeeze([-1, -2])

@@ -1,20 +1,20 @@
 {
   "block_sizes": [
     1,
-    64,
-    32
+    128,
+    64
   ],
   "range_unroll_factors": [
     0,
-    2,
-    1
+    0,
+    0
   ],
   "range_warp_specializes": [],
   "range_num_stages": [],
   "range_multi_buffers": [
     null,
-    false,
-    null
+    null,
+    false
   ],
   "range_flattens": [
     null,
@@ -22,33 +22,33 @@
     true
   ],
   "load_eviction_policies": [
-    "last",
-    "first",
-    "first",
     "",
     "",
-    "first",
-    "first",
-    "first",
-    "last",
-    "last"
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
   ],
-  "num_warps": 4,
-  "num_stages": 4,
+  "num_warps": 8,
+  "num_stages": 1,
   "indexing": [
     "pointer",
-    "tensor_descriptor",
-    "tensor_descriptor",
-    "pointer",
-    "tensor_descriptor",
     "pointer",
     "pointer",
     "pointer",
-    "tensor_descriptor",
     "pointer",
-    "tensor_descriptor",
-    "tensor_descriptor",
-    "tensor_descriptor"
+    "pointer",
+    "pointer",
+    "pointer",
+    "pointer",
+    "pointer",
+    "pointer",
+    "pointer",
+    "pointer"
   ],
   "pid_type": "flat"
 }

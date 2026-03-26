@@ -1,12 +1,12 @@
 {
   "block_sizes": [
     1,
-    64,
-    32
+    256,
+    64
   ],
   "range_unroll_factors": [
     0,
-    0,
+    1,
     0
   ],
   "range_warp_specializes": [],
@@ -26,15 +26,10 @@
     "",
     "",
     "",
-    "",
-    "",
-    "",
-    "",
-    "",
     ""
   ],
-  "num_warps": 4,
-  "num_stages": 3,
+  "num_warps": 16,
+  "num_stages": 1,
   "indexing": [
     "pointer",
     "pointer",
@@ -42,12 +37,7 @@
     "pointer",
     "pointer",
     "pointer",
-    "pointer",
-    "pointer",
-    "pointer",
-    "pointer",
-    "pointer",
-    "pointer",
+    "tensor_descriptor",
     "pointer"
   ],
   "pid_type": "flat"

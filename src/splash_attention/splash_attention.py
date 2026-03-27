@@ -33,6 +33,7 @@ def _sparse_attn_fwd(
 ):
 
     B, T, hs = q.shape
+    _hs = hl.specialize(hs)
 
     scale = 1 / math.sqrt(q.size(-1))
 
@@ -47,42 +48,44 @@ def _sparse_attn_fwd(
     else:
         count = float(T * T)
 
-    for tile_b in hl.tile(B):
-        for tile_q in hl.tile(T):
-            max_logits = hl.full([tile_b, tile_q], float('-inf'), device=q.device, dtype=torch.float32)
-            sumexp = hl.zeros([tile_b, tile_q], device=q.device, dtype=torch.float32)
-            qs = q[tile_b, tile_q, :].float()
-            for tile_k in hl.tile(T):
-                ks = k[tile_b, tile_k, :].float()
-                logits = (qs @ ks.transpose(-1, -2) * scale)
+    for tile_b, tile_q in hl.tile([B, T]):
+        _p_mask = hl.zeros([tile_b], device=q.device, dtype=torch.float32)
+        max_logits = hl.full([tile_b, tile_q], float('-inf'), device=q.device, dtype=torch.float32)
+        sumexp = hl.zeros([tile_b, tile_q], device=q.device, dtype=torch.float32)
+        _out = hl.zeros([tile_b, tile_q, _hs], device=q.device, dtype=torch.float32)
+        qs = q[tile_b, tile_q, :].float() * scale
+        for tile_k in hl.tile(T):
+            ks = k[tile_b, tile_k, :].float()
+            logits = qs @ ks.transpose(-1, -2)
 
+            if causal:
+                causal_mask = tile_q.index[:, None] >= tile_k.index[None, :]
+                logits = torch.where(causal_mask, logits, float('-inf'))
+            logits_biased = logits + bias_gate
+            _p_mask += logits_biased.sigmoid().sum(dim=-1).sum(dim=-1)
+
+            new_max_logits = torch.maximum(max_logits, logits.amax(dim=-1))
+            ratio = torch.exp(max_logits - new_max_logits)
+            exp_weights = torch.exp(logits - new_max_logits[:, :, None])
+
+            if sample:
+                rand = torch.logit(hl.rand(logits.shape, seed=seed, device=q.device))
+                sparse_mask = logits_biased + rand > 0
+            else:
+                sparse_mask = logits_biased > 0
+
+            if return_map:
                 if causal:
-                    causal_mask = tile_q.index[:, None] >= tile_k.index[None, :]
-                    logits = torch.where(causal_mask, logits, float('-inf'))
-                p_mask[tile_b] += (logits + bias_gate).sigmoid().sum(dim=-1).sum(dim=-1)
-
-                new_max_logits = torch.maximum(max_logits, logits.amax(dim=-1))
-                old_sumexp = sumexp * torch.exp(max_logits - new_max_logits)
-                exp_weights = torch.exp(logits - new_max_logits[:, :, None])
-                new_sumexp = old_sumexp + exp_weights.sum(dim=-1)
-
-                if sample:
-                    rand = torch.logit(hl.rand(logits.shape, seed=seed, device=q.device))
-                    sparse_mask = logits + rand + bias_gate > 0
+                    adj[tile_b, tile_q, tile_k] = sparse_mask & causal_mask
                 else:
-                    sparse_mask = logits + bias_gate > 0
-
-                if return_map:
-                    if causal:
-                        adj[tile_b, tile_q, tile_k] = sparse_mask & causal_mask
-                    else:
-                        adj[tile_b, tile_q, tile_k] = sparse_mask
-                weights = torch.where(sparse_mask, exp_weights, 0) / new_sumexp[:, :, None]
-                out_old = (old_sumexp / new_sumexp)[:, :, None] * out[tile_b, tile_q, :]
-                out[tile_b, tile_q, :] = torch.baddbmm(out_old, weights, v[tile_b, tile_k, :].float())
-                max_logits = new_max_logits
-                sumexp = new_sumexp
-            lse[tile_b, tile_q] = max_logits + torch.log(sumexp)
+                    adj[tile_b, tile_q, tile_k] = sparse_mask
+            weights = torch.where(sparse_mask, exp_weights, 0)
+            _out = torch.baddbmm(ratio[:, :, None] * _out, weights, v[tile_b, tile_k, :].float())
+            max_logits = new_max_logits
+            sumexp = ratio * sumexp + exp_weights.sum(dim=-1)
+        out[tile_b, tile_q, :] = _out / sumexp[:, :, None]
+        lse[tile_b, tile_q] = max_logits + torch.log(sumexp)
+        hl.atomic_add(p_mask, [tile_b], _p_mask)
     p_mask.div_(count)
 
     if return_map:

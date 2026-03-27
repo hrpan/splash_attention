@@ -1,6 +1,6 @@
 [project]
 name = "splash_attention"
-version = "0.3.0"
+version = "0.3.1"
 description = "PyTorch Helion kernel for sparse attention"
 readme = "README.md"
 license = {file = "LICENSE"}

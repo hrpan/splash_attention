@@ -149,23 +149,26 @@ def _sparse_attn_bwd(
             qs = q[tile_b, tile_q, :].float()
             _grad_out = grad_out[tile_b, tile_q, :].float()
             _go = go[tile_b, tile_q, :].float()
+            qs_scaled = qs * scale
 
             for tile_k in hl.tile(T):
                 ks = k[tile_b, tile_k, :].float()
-                logits = (qs @ ks.transpose(-1, -2) * scale)
+                logits = qs_scaled @ ks.transpose(-1, -2)
 
                 if causal:
                     causal_mask = tile_q.index[:, None] >= tile_k.index[None, :]
                     logits = torch.where(causal_mask, logits, float('-inf'))
+                logits_biased = logits + bias_gate
 
                 if sample:
                     rand = torch.logit(hl.rand(logits.shape, seed=seed, device=q.device))
-                    sparse_mask = logits + rand + bias_gate > 0
-                    gate = (logits + rand + bias_gate).sigmoid()
-                    gate_prob = (logits + bias_gate).sigmoid()
+                    logits_biased_rand = logits_biased + rand
+                    sparse_mask = logits_biased_rand > 0
+                    gate = logits_biased_rand.sigmoid()
+                    gate_prob = logits_biased.sigmoid()
                 else:
-                    sparse_mask = logits + bias_gate > 0
-                    gate = (logits + bias_gate).sigmoid()
+                    sparse_mask = logits_biased > 0
+                    gate = logits_biased.sigmoid()
                     gate_prob = gate
 
                 attn_weights = torch.exp(logits - _lse)

@@ -13,18 +13,18 @@
   "range_num_stages": [],
   "range_multi_buffers": [
     null,
-    null,
-    true
-  ],
-  "range_flattens": [
-    null,
     false,
     null
   ],
+  "range_flattens": [
+    null,
+    null,
+    null
+  ],
   "load_eviction_policies": [
+    "last",
     "",
     "",
-    "first",
     "",
     "",
     "",
@@ -46,8 +46,8 @@
     "pointer",
     "pointer",
     "pointer",
-    "pointer",
-    "pointer",
+    "tensor_descriptor",
+    "tensor_descriptor",
     "pointer"
   ],
   "pid_type": "flat"

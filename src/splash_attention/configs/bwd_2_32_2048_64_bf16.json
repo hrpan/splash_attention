@@ -2,14 +2,15 @@
   "block_sizes": [
     1,
     128,
-    64
+    128
   ],
   "range_unroll_factors": [
     0,
-    1,
+    0,
     0
   ],
   "range_warp_specializes": [],
+  "range_num_stages": [],
   "range_multi_buffers": [
     null,
     null,
@@ -33,7 +34,7 @@
     ""
   ],
   "num_warps": 8,
-  "num_stages": 4,
+  "num_stages": 2,
   "indexing": [
     "pointer",
     "pointer",
@@ -49,6 +50,5 @@
     "pointer",
     "pointer"
   ],
-  "pid_type": "persistent_interleaved",
-  "num_sm_multiplier": 1
+  "pid_type": "flat"
 }

@@ -271,7 +271,7 @@ class SplashAttention(torch.autograd.Function):
         sample = ctx.sample
         seed = ctx.seed
 
-        go = (grad_out[..., None, :] @ out[..., None]).squeeze([-1, -2])
+        go = (grad_out[..., None, :].float() @ out[..., None].float()).squeeze([-1, -2])
 
         B, nh, T, hs = q.shape
 
